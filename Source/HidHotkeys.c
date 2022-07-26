@@ -55,8 +55,12 @@
 #include "OSAL.h"
 #include "OSAL_PwrMgr.h"
 #include "OnBoard.h"
+
+#include "hal_drivers.h"
 #include "hal_led.h"
 #include "hal_key.h"
+#include "hal_adc.h"
+
 #include "gatt.h"
 #include "hci.h"
 #include "gapgattserver.h"
@@ -143,6 +147,9 @@
 // Battery level is critical when it is less than this %
 #define DEFAULT_BATT_CRITICAL_LEVEL           6
 
+// ADC voltage levels
+#define BATT_ADC_LEVEL_3_0V                   409 // 3.0 V
+#define BATT_ADC_LEVEL_2_0V                   273 // 2.0 V
 /*********************************************************************
  * TYPEDEFS
  */
@@ -234,6 +241,8 @@ static uint8 HidHotkeysRcvReport( uint8 len, uint8 *pData );
 static uint8 HidHotkeysRptCB( uint8 id, uint8 type, uint16 uuid,
                              uint8 oper, uint8 *pLen, uint8 *pData );
 static void HidHotkeysEvtCB( uint8 evt );
+static void HidHotkeysBattMeasSetupCB( void );
+static void HidHotkeysBattMeasTeardownCB( void );
 
 /*********************************************************************
  * PROFILE CALLBACKS
@@ -320,7 +329,21 @@ void HidHotkeys_Init( uint8 task_id )
   // Setup Battery Characteristic Values
   {
     uint8 critical = DEFAULT_BATT_CRITICAL_LEVEL;
+    
     Batt_SetParameter( BATT_PARAM_CRITICAL_LEVEL, sizeof (uint8), &critical );
+
+    Batt_Setup( HAL_ADC_CHN_AIN6, BATT_ADC_LEVEL_2_0V, BATT_ADC_LEVEL_3_0V,
+                HidHotkeysBattMeasSetupCB, HidHotkeysBattMeasTeardownCB, NULL );
+
+    /* Control of transistor in the battery measurement voltage divider */
+    P1DIR |= (1<<5);
+    P1SEL &= ~(1<<5);
+    P1_5 = 0; // Stop feeding current through voltage divider
+    
+    /* Analog measuring pin setup. This will be retained during ADC read */
+    P0DIR |= (1<<6);
+    P0SEL &= ~(1<<6);
+    P0_6 = 0; // LOW output to stop leakage current due to default pull-up
   }
 
   // Set up HID keyboard service
@@ -679,6 +702,37 @@ static void HidHotkeysEvtCB( uint8 evt )
   return;
 }
 
+/*********************************************************************
+ * @fn      HidHotkeysBattMeasSetupCB
+ *
+ * @brief   Callback from battery service to set up measurement environment
+ *
+ * @param   none
+ *
+ * @return  none
+ */
+static void HidHotkeysBattMeasSetupCB( void )
+{
+  P1_5 = 1;  // Open transistor in voltage divider
+  
+  /* Analog pin P0.6 is configured by HAL ADC routine */
+}
+
+/*********************************************************************
+ * @fn      HidHotkeysBattMeasTeardownCB
+ *
+ * @brief   Callback from battery service to tear down measurement environment
+ *
+ * @param   none
+ *
+ * @return  none
+ */
+static void HidHotkeysBattMeasTeardownCB( void )
+{
+  P1_5 = 0; // Stop feeding current through voltage divider
+  
+  /* Idle state P0.6 settings are retained from Init */
+}
 
 /*********************************************************************
 *********************************************************************/
